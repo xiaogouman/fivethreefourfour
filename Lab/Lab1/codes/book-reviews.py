@@ -19,7 +19,7 @@ def get_doc_word_counts(docs, stopwords):
 
 # step 2: calculate tf-tdf for every word for every doc, return in format of ((doc_id, word), count)
 def tf_idf(tf, df, n):
-    return (1 + math.log(tf)) * math.log(n / df)
+    return (1 + math.log(tf,10)) * math.log(n / df, 10)
 
 
 def calculate_tf_idf(word_group, n):
@@ -60,7 +60,11 @@ def get_normalized_tf_idf(tf_idf):
 def calculate_score(doc_tf_idf, query):
     v1 = np.array([each_tf_idf[1] for each_tf_idf in doc_tf_idf])
     v2 = np.array([1 if each_tf_idf[0] in query else 0 for each_tf_idf in doc_tf_idf])
-    return v1.dot(v2.transpose()) / np.sqrt(v1.dot(v1)) * np.sqrt(v2.dot(v2))
+    top_part = v1.dot(v2.transpose())
+    if top_part == 0:
+        return 0
+    else:
+        return top_part / (np.sqrt(v1.dot(v1)) * np.sqrt(v2.dot(v2)))
 
 
 def get_relevance_score(normalized_tf_idf, query):
@@ -82,13 +86,14 @@ def get_sorted_scores(scores, k):
 
 
 def main():
-    conf = SparkConf()
+    conf = SparkConf()\
+        .setAppName('book-reviews')
     sc = SparkContext(conf=conf)
     spark = SparkSession \
         .builder \
         .getOrCreate()
     my_logger = logging.getLogger('BookReviews')
-    my_dir = '/Users/xiaogouman/Documents/Masters Notes/CS5344/Lab/Lab1/'
+    my_dir = '/Users/xiaogouman/Documents/masters/CS5344/Lab/Lab1/'
 
     query = set(sc.textFile(my_dir+'query.txt').flatMap(lambda l: re.split(r'[^\w]+', l))
                 .map(lambda s: s.lower()).collect())
@@ -98,8 +103,10 @@ def main():
                     .map(lambda s: s.lower()).collect())
 
     # read json using sparksql and map to document type
-    reviews = spark.read.json(my_dir+'bookreviews.json')
-    docs = reviews.rdd.map(lambda doc: (doc.asin + doc.reviewerID, doc.reviewText + ' ' + doc.summary))
+    reviews = spark.read.json(my_dir+'reviews_Kindle_Store_5.json')
+    #reviews = spark.read.json(my_dir+'bookreviews-short.json')
+
+    docs = reviews.rdd.map(lambda doc: (doc.reviewerID+doc.asin, doc.reviewText + ' ' + doc.summary))
     n = docs.count()
     k = 20
 
@@ -107,25 +114,25 @@ def main():
     my_logger.info('Step 1 starts')
     doc_word_counts = get_doc_word_counts(docs, stopwords)
     my_logger.info('Step 1 ends')
-    # doc_word_counts.saveAsTextFile('docWordCounts')
+    #doc_word_counts.saveAsTextFile('docWordCounts')
 
     # step 2
     my_logger.info('Step 2 starts')
     tf_idf = get_tf_idf(doc_word_counts, n)
     my_logger.info('Step 2 ends')
-    # tf_idf.saveAsTextFile('tfIdf')
+    #tf_idf.saveAsTextFile('tfIdf')
 
     # step 3
     my_logger.info('Step 3 starts')
     normalized_tf_idf = get_normalized_tf_idf(tf_idf)
     my_logger.info('Step 3 ends')
-    # normalized_tf_idf.saveAsTextFile('normalizedTfIdf')
+    #normalized_tf_idf.saveAsTextFile('normalizedTfIdf')
 
     # step 4
     my_logger.info('Step 4 starts')
     scores = get_relevance_score(normalized_tf_idf, query)
     my_logger.info('Step 4 ends')
-    # scores.saveAsTextFile('scores')
+    #scores.saveAsTextFile('scores')
 
     # step 5
     my_logger.info('Step 5 starts')
@@ -134,6 +141,9 @@ def main():
 
     for score in sorted_scores:
         print('DocId: {0}, Score: {1}'.format(score[0], score[1]))
+
+    with open("scores.txt", 'w') as f:
+        np.savetxt(f, sorted_scores, delimiter=',', fmt='%s')
 
     sc.stop()
 
