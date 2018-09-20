@@ -5,6 +5,38 @@ from pyspark.sql import SparkSession
 import numpy as np
 import logging
 
+'''
+Name: Zuo Shumman
+StudentId: E0336049
+
+Remarks: I use 'reviews_Kindle_Store_5.json' as the dataset, which is about 800M big, due to limited
+resouces of my PC.
+
+Top 20 scores(cosine similarity):
+====================
+DocId,Score
+ARW2ZC35RT9DP-B00EUGVXJ2,0.5373703023251719
+A1QQWCV32TRER7-B005VFXLIW,0.4956585034969728
+A1B7DR0K0VCMM-B008IGHGXW,0.4943300928461792
+A3IC05KV0TWHEE-B00FKKWQXY,0.49368696018745556
+A323H7CL7G313K-B00G2GMRCU,0.48673346112366367
+A2I6Z9AKM51CZI-B00H9KEAKA,0.4682728326842841
+A36AIW5KPEKEHQ-B0070TFYSC,0.4663152059875413
+A3MCGUE3S4HPL5-B00ASPKRSC,0.45924916044852593
+AZMMFZKJB8PV6-B005NWIAAW,0.4536083110108068
+A1I53V3YF42546-B00C2YRAQE,0.4521820454419772
+AFBLYN4LJ4UQH-B008QGJ1K0,0.4521369839687979
+A3O5UR6NHR4MRP-B00CX6Z88I,0.45082241314166005
+A3O5UR6NHR4MRP-B00CKVE6U2,0.45058593855811313
+A23ILLE19GTILU-B00B77TD6M,0.45022804701790187
+A2ZTY51F0BEQ9P-B00IB4YWX8,0.44997162370324245
+A1DZ5U6YLKI2HZ-B00B60R6W8,0.449012777989839
+ARGVN3VQ75W77-B00IRLFJ96,0.4385550146049371
+A1FSE5S5EKD58F-B00EEE52DI,0.4349192123001444
+AW6BVPL0TZPQU-B00BGY7XX6,0.43446520160712876
+A20JCYF5CXS6PX-B00CJ2BR6S,0.43441960591123024
+====================
+'''
 
 # step 1: return word count in format of ((doc_id, word), count)
 def get_doc_word_counts(docs, stopwords):
@@ -12,14 +44,14 @@ def get_doc_word_counts(docs, stopwords):
         .flatMap(lambda doc: [(doc[0], word.lower()) for word in re.sub(r"[^a-zA-Z0-9]+", ' ', doc[1]).split(' ')])
     doc_word_counts = doc_word_tuples \
         .filter(lambda doc_word: doc_word[1] != '' and doc_word[1] not in stopwords) \
-        .mapPartitions(lambda doc_words: [((doc_word[0], doc_word[1]), 1) for doc_word in doc_words]) \
+        .map(lambda doc_word: ((doc_word[0], doc_word[1]), 1)) \
         .reduceByKey(lambda n1, n2: n1 + n2)
     return doc_word_counts
 
 
 # step 2: calculate tf-tdf for every word for every doc, return in format of ((doc_id, word), count)
 def tf_idf(tf, df, n):
-    return (1 + math.log(tf,10)) * math.log(n / df, 10)
+    return (1 + math.log(tf, 10)) * math.log(n / df, 10)
 
 
 def calculate_tf_idf(word_group, n):
@@ -31,10 +63,7 @@ def calculate_tf_idf(word_group, n):
 
 def get_tf_idf(doc_word_counts, n):
     return doc_word_counts \
-        .mapPartitions(
-        lambda doc_word_count_partition:
-        [(doc_word_count[0][1], (doc_word_count[0][0], doc_word_count[1]))
-         for doc_word_count in doc_word_count_partition]) \
+        .map(lambda doc_word_count: (doc_word_count[0][1], (doc_word_count[0][0], doc_word_count[1]))) \
         .groupByKey().flatMap(lambda word_group: calculate_tf_idf(word_group, n))
 
 
@@ -48,36 +77,16 @@ def calculate_normalized_tf_idf(doc_group):
 
 def get_normalized_tf_idf(tf_idf):
     return tf_idf \
-        .mapPartitions(
-        lambda doc_word_tf_idf_partition:
-        [(doc_word_tf_idf[0][0], (doc_word_tf_idf[0][1], doc_word_tf_idf[1]))
-         for doc_word_tf_idf in doc_word_tf_idf_partition]) \
+        .map(lambda doc_word_tf_idf: (doc_word_tf_idf[0][0], (doc_word_tf_idf[0][1], doc_word_tf_idf[1]))) \
         .groupByKey().flatMap(lambda doc_group: calculate_normalized_tf_idf(doc_group))
 
 
 # step 4: calculate relevance score
-# doc_tf_idf is of format (word, normalized_tf_idf)
-def calculate_score(doc_tf_idf, query):
-    v1 = np.array([each_tf_idf[1] for each_tf_idf in doc_tf_idf])
-    v2 = np.array([1 if each_tf_idf[0] in query else 0 for each_tf_idf in doc_tf_idf])
-    top_part = v1.dot(v2.transpose())
-    if top_part == 0:
-        return 0
-    else:
-        return top_part / (np.sqrt(v1.dot(v1)) * np.sqrt(v2.dot(v2)))
-
-
 def get_relevance_score(normalized_tf_idf, query):
+    normalized_query = 1/math.sqrt(len(query))
     return normalized_tf_idf \
-        .mapPartitions(
-        lambda each_tf_idf_partition:
-        [(each_tf_idf[0][0], (each_tf_idf[0][1], each_tf_idf[1]))
-         for each_tf_idf in each_tf_idf_partition]) \
-        .groupByKey() \
-        .mapPartitions(
-        lambda doc_group_partition:
-        [(doc_group[0], calculate_score(doc_group[1], query))
-         for doc_group in doc_group_partition])
+        .map(lambda each_tf_idf: (each_tf_idf[0][0], each_tf_idf[1]*normalized_query if each_tf_idf[0][1] in query else 0)) \
+        .reduceByKey(lambda a,b: a+b)
 
 
 # step 5 return scores sorted by score
@@ -104,9 +113,8 @@ def main():
 
     # read json using sparksql and map to document type
     reviews = spark.read.json(my_dir+'reviews_Kindle_Store_5.json')
-    #reviews = spark.read.json(my_dir+'bookreviews-short.json')
 
-    docs = reviews.rdd.map(lambda doc: (doc.reviewerID+doc.asin, doc.reviewText + ' ' + doc.summary))
+    docs = reviews.rdd.map(lambda doc: (doc.reviewerID+'-'+doc.asin, doc.reviewText + ' ' + doc.summary))
     n = docs.count()
     k = 20
 
