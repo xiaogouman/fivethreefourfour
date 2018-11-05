@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from pyspark.sql.types import IntegerType, FloatType
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.recommendation import ALS, ALSModel
 from pyspark.sql import Row
@@ -6,40 +7,14 @@ from pyspark.sql.functions import countDistinct
 import pandas as pd
 import os
 
-spark = SparkSession.builder.master("local").appName("Classify Urls").getOrCreate()
-columns = ['userId','itemId','rating','timestamp']
-if True:#not os.path.isfile('filtered_data.csv'):
-    rawdf = spark.read.csv("ratings_Digital_Music.csv").toDF('userId','itemId','rating','timestamp')
-    rawdf.createOrReplaceTempView("useritem")
-    # row counts = 836006
-    spark.sql('SELECT COUNT(*) FROM useritem')
-    # item counts = 266414
-    spark.sql('SELECT COUNT(DISTINCT itemId) FROM useritem')
-    # user counts = 478235
-    spark.sql('SELECT COUNT(DISTINCT userId) FROM useritem')
-    # number of users who only rate for 1 item: 358615
-    spark.sql('SELECT COUNT(*) FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count == 1)')
-    # select user who rate for > 1 items and items rated by > 1 user
-    users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 1)'
-    items = 'SELECT itemId FROM (SELECT DISTINCT COUNT(*) AS count, itemId FROM useritem GROUP BY itemId HAVING count > 1)'
+spark = SparkSession.builder.master("local").appName("Collborative Filering").getOrCreate()
+training = spark.read.csv('training', inferSchema =True).toDF('itemId', 'rating', 'userId')
+test = spark.read.csv('test', inferSchema =True).toDF('itemId', 'rating', 'userId')
 
-    # after filter out the sparse part: 353553
-    df = spark.sql('SELECT * FROM useritem WHERE userId IN ('+ users +')')#AND itemId IN (' + items + ')')
-
-    # df_pandas = pd.DataFrame(df, columns=columns)
-    # df_pandas.to_csv("filtered_data.csv", header=True)
-else:
-    print('loading processed data')
-    df = spark.read.csv("filtered_data.csv", header=True).toDF()
-
-print('count of filtered db: {0}'.format(df.count()))
-
-userIdIntMap = df.rdd.map(lambda r: r.userId).distinct().zipWithUniqueId().collectAsMap()
-itemIdIntMap = df.rdd.map(lambda r: r.itemId).distinct().zipWithUniqueId().collectAsMap()
-
-ratings = df.rdd.map(lambda d:Row(userId=userIdIntMap.get(d.userId), itemId=itemIdIntMap.get(d.itemId), rating=float(d.rating))).toDF()
-(training, test) = ratings.randomSplit([0.8, 0.2])
-
+# training = training.withColumn("itemId", training["itemId"].cast(IntegerType()))\
+#     .withColumn('userId', training['userId'].cast(IntegerType())).withColumn('rating', training['rating'].cast(FloatType()))
+# test = test.withColumn("itemId", test["itemId"].cast(IntegerType()))\
+#     .withColumn('userId', test['userId'].cast(IntegerType())).withColumn('rating', test['rating'].cast(FloatType()))
 
 ############## test on the paramters for ALS model
 numIterations = 20
@@ -73,34 +48,55 @@ if test_model_params:
 
 
 ############### calculate conversion rate ##################
+import pickle as pk
 K = 5
+train = False
+if train:
+    if not os.path.isdir('als-model'):
+        als = ALS(maxIter=20, regParam=1, rank=50, userCol="userId", itemCol="itemId", ratingCol="rating",
+                  coldStartStrategy="drop")
+        model = als.fit(training)
+        model.save('als-model')
+    else:
+        # load model
+        print('loading model')
+        model = ALSModel.load('als-model')
 
-als = ALS(maxIter=20, regParam=1, rank=50, userCol="userId", itemCol="itemId", ratingCol="rating",
-          coldStartStrategy="drop")
 
-if not os.path.isdir('als-model'):
-    model = als.fit(training)
-    model.save('als-model')
-else:
-    # load model
-    print('loading model')
-    model = ALSModel.load('als-model')
+    test_users = test.select('userId').distinct()
+    test_users.show()
+    test_recs = model.recommendForUserSubset(test_users, K).select("userId", "recommendations.itemId")
+    test_recs.show()
 
-test_users = test.select('userId').distinct()
-test_recs = model.recommendForUserSubset(test_users, K)
+    recs_list = test_recs.rdd.collect()
 
+    pk.dump(recs_list, open('recs.p', 'wb'))
+
+print('loading predictions')
+recs_list = pk.load(open('recs.p', 'rb'))
 def is_converted(row, k):
     userId = row.userId
-    recs = row.item[:k]
-    actual = test.select('userId == ' + userId).rdd.map(lambda row: row.itemId).collect()
-    # for rec in recs:
-    #     if rec in actual
+    recs = row.itemId[:k]
+    actual = test.where(test.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collect()
+    training_actual = training.where(training.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collectAsSet
+    # print(actual)
+    # print(recs)
+    for rec in recs:
+        if rec in training_actual:
+            print('problem!')
+        if rec in actual:
+            print('got one')
+            return 1
+    return 0
 
 
-test_recs.show()
 for i in range(1, K+1):
-    result = test_recs.rdd.map(lambda row: is_converted(row)).collect()
-    rate = sum(result)/len(result)
+    print('predicting conversion rate @K={0}'.format(i))
+    count = 0
+    for row in recs_list:
+        if is_converted(row, i):
+            count += 1
+    rate = count/len(recs_list)
     print('K={0}, conversion rate={1}'.format(i, rate))
 
 
