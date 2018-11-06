@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 spark = SparkSession.builder.master("local").appName("Collborative Filering").getOrCreate()
 
 # load csv
-rawdf = spark.read.csv("ratings_Digital_Music.csv").toDF('userId', 'itemId', 'rating', 'timestamp')
+rawdf = spark.read.csv("ratings_Musical_Instruments.csv").toDF('userId', 'itemId', 'rating', 'timestamp')
 
 # map userId and itemId to iteger
 userIdIntMap = rawdf.rdd.map(lambda r: r.userId).distinct().zipWithUniqueId().collectAsMap()
