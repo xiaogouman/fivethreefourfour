@@ -8,13 +8,14 @@ from pyspark.ml.recommendation import ALS, ALSModel
 spark = SparkSession.builder.appName("Collborative Filering")\
     .master('local[3]')\
     .config('spark.executor.heartbeatInterval','20s')\
-    .config('spark.executor.memory', '3g')\
+    .config('spark.executor.memory', '3g') \
+    .config('spark.driver.memory', '20g') \
     .getOrCreate()
 sc = spark.sparkContext
 training = spark.read.csv('train.csv', inferSchema =True, header=True).toDF('userId','itemId', 'rating')
 test = spark.read.csv('test.csv', inferSchema =True, header=True).toDF('userId','itemId', 'rating')
 
-############## test on the paramters for ALS model
+############## test on the paramters for ALS model ############
 numIterations = 20
 ranks = [50]
 ls = [1, 0.1, 0.01, 0.001, 0.0001]
@@ -45,18 +46,18 @@ if test_model_params:
             print("train Mean-square error = " + str(mse))
 
 
-############### calculate conversion rate ##################
+############### traing model ##################
 
 test_users = test.select('userId').distinct()
 test_user_set = set(test_users.rdd.map(lambda r: r.userId).collect())
-K = 10
+K = 5
 
 als = ALS(maxIter=20, rank=50, regParam=1, userCol="userId", itemCol="itemId", ratingCol="rating",
           coldStartStrategy="drop")
 model = als.fit(training)
 
 ############## conversion rate ##############
-test_recs = model.recommendForUserSubset(test_users, 500).select("userId", "recommendations.itemId")
+test_recs = model.recommendForUserSubset(test_users, 250).select("userId", "recommendations.itemId")
 test_recs_dict = defaultdict(list)
 for row in test_recs.rdd.collect():
     test_recs_dict[row.userId] = list(row.itemId)
@@ -80,8 +81,9 @@ for i in range(1, K+1):
         train = train_dict[userId]
         test = test_dict[userId]
         actual_recs = set([x for x in recs if x not in train][:i])
-        recs = set(recs[:i])
-        if recs.intersection(test):
+        # if set(recs).intersection(train):
+        #     print('problem')
+        if actual_recs.intersection(test):
             count += 1
     rate = count/test_user_count
     print('K={0}, conversion rate={1}'.format(i, rate))

@@ -10,7 +10,7 @@ import os
 spark = SparkSession.builder.master("local").appName("Collborative Filering").getOrCreate()
 
 # create df
-rawdf = spark.read.csv("ratings_Musical_Instruments.csv").toDF('userId', 'itemId', 'rating', 'timestamp')
+rawdf = spark.read.csv("ratings_Sports_and_Outdoors.csv").toDF('userId', 'itemId', 'rating', 'timestamp')
 rawdf.createOrReplaceTempView("useritem")
 
 # row counts = 836006
@@ -31,8 +31,8 @@ userId_one_item = spark.sql(
 userId_one_item.show()
 
 # select user who rate for > 1 items and items rated by > 1 user
-users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 1)'
-items = 'SELECT itemId FROM (SELECT DISTINCT COUNT(*) AS count, itemId FROM useritem GROUP BY itemId HAVING count > 1)'
+users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 5)'
+items = 'SELECT itemId FROM (SELECT DISTINCT COUNT(*) AS count, itemId FROM useritem GROUP BY itemId HAVING count > 5)'
 
 # after filter out the sparse part: 353553
 df = spark.sql('SELECT * FROM useritem WHERE userId IN (' + users + ')')  # AND itemId IN (' + items + ')')

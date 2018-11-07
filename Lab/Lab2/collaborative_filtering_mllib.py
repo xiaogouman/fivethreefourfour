@@ -10,7 +10,8 @@ from pyspark.sql.functions import countDistinct
 spark = SparkSession.builder.appName("Collborative Filering")\
     .master('local[3]')\
     .config('spark.executor.heartbeatInterval','20s')\
-    .config('spark.executor.memory', '3g')\
+    .config('spark.executor.memory', '3g') \
+    .config('spark.driver.memory', '20g') \
     .getOrCreate()
 sc = spark.sparkContext
 
