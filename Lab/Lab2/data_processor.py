@@ -39,7 +39,7 @@ else:
     userId_one_item.show()
 
     # select user who rate for > 1 items and items rated by > 1 user
-    users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 1)'
+    users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 2 AND count < 200)'
     items = 'SELECT itemId FROM (SELECT DISTINCT COUNT(*) AS count, itemId FROM useritem GROUP BY itemId HAVING count > 1)'
 
     # after filter out the sparse part: 353553
@@ -52,7 +52,7 @@ else:
     ratings = df.rdd.map(lambda d:Row(userIdIntMap.get(d.userId), itemIdIntMap.get(d.itemId), float(d.rating))).toDF()
     ratings = ratings.toDF('userId','itemId','rating')
     ratings.show()
-    (training, test) = ratings.limit(10000).randomSplit([0.8, 0.2])
+    (training, test) = ratings.randomSplit([0.8, 0.2])
     training.toPandas().to_csv('train.csv', index=False)
     test.toPandas().to_csv('test.csv', index=False)
     # training.write.csv('training')

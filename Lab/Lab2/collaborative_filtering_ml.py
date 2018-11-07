@@ -7,14 +7,13 @@ from pyspark.sql.functions import countDistinct
 import pandas as pd
 import os
 
-spark = SparkSession.builder.master("local").appName("Collborative Filering").getOrCreate()
-training = spark.read.csv('training', inferSchema =True).toDF('itemId', 'rating', 'userId')
-test = spark.read.csv('test', inferSchema =True).toDF('itemId', 'rating', 'userId')
-
-# training = training.withColumn("itemId", training["itemId"].cast(IntegerType()))\
-#     .withColumn('userId', training['userId'].cast(IntegerType())).withColumn('rating', training['rating'].cast(FloatType()))
-# test = test.withColumn("itemId", test["itemId"].cast(IntegerType()))\
-#     .withColumn('userId', test['userId'].cast(IntegerType())).withColumn('rating', test['rating'].cast(FloatType()))
+spark = SparkSession.builder.master("local[4]")\
+    .appName("Collborative Filering")\
+    .config("spark.driver.memory","20g")\
+    .getOrCreate()
+sc = spark.sparkContext
+training = spark.read.csv('train.csv', inferSchema =True, header=True).toDF('userId','itemId', 'rating')
+test = spark.read.csv('test.csv', inferSchema =True, header=True).toDF('userId','itemId', 'rating')
 
 ############## test on the paramters for ALS model
 numIterations = 20
@@ -49,55 +48,64 @@ if test_model_params:
 
 ############### calculate conversion rate ##################
 import pickle as pk
-K = 5
-train = False
+
+test_users = test.select('userId').distinct()
+K = 10
+train = True
 if train:
-    if not os.path.isdir('als-model'):
-        als = ALS(maxIter=20, regParam=1, rank=50, userCol="userId", itemCol="itemId", ratingCol="rating",
-                  coldStartStrategy="drop")
-        model = als.fit(training)
-        model.save('als-model')
-    else:
-        # load model
-        print('loading model')
-        model = ALSModel.load('als-model')
+    als = ALS(maxIter=20, rank=50, userCol="userId", itemCol="itemId", ratingCol="rating",
+              coldStartStrategy="drop")
+    model = als.fit(training)
 
+    # test_users.show()
+    test_recs = model.recommendForUserSubset(test_users, 180).select("userId", "recommendations.itemId")
+    # test_recs.show()
 
-    test_users = test.select('userId').distinct()
-    test_users.show()
-    test_recs = model.recommendForUserSubset(test_users, K).select("userId", "recommendations.itemId")
-    test_recs.show()
-
-    recs_list = test_recs.rdd.collect()
-
-    pk.dump(recs_list, open('recs.p', 'wb'))
-
-print('loading predictions')
-recs_list = pk.load(open('recs.p', 'rb'))
+#     print('saving predictions')
+#     test_recs.rdd.saveAsPickleFile('recs-ml')
+#
+# print('loading predictions')
+# recs_rdd = sc.pickleFile('recs-ml')
+# print(recs_rdd.take(2))
 def is_converted(row, k):
     userId = row.userId
-    recs = row.itemId[:k]
-    actual = test.where(test.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collect()
-    training_actual = training.where(training.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collectAsSet
+    recs = row.itemId
+    actual = set(test.where(test.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collect())
+    training_actual = set(training.where(training.userId == userId).select('itemId').rdd.map(lambda row: row.itemId).collect())
+    recs_exclude_training = [x for x in recs if x not in training_actual][:k]
     # print(actual)
     # print(recs)
-    for rec in recs:
-        if rec in training_actual:
-            print('problem!')
+    for rec in recs_exclude_training:
+        # if rec in training_actual:
+        #     print('problem!')
         if rec in actual:
             print('got one')
-            return 1
-    return 0
+            return True
+    return False
 
-
+test_user_count = test_users.count()
 for i in range(1, K+1):
     print('predicting conversion rate @K={0}'.format(i))
     count = 0
-    for row in recs_list:
+    for row in test_recs.rdd.collect():
         if is_converted(row, i):
             count += 1
-    rate = count/len(recs_list)
+    rate = count/test_user_count
     print('K={0}, conversion rate={1}'.format(i, rate))
+    # count = 0
+    # for userId in test_users.rdd.collect():
+    #     train_rated = set(training.filter(lambda r: r.userId == userId).map(lambda r: r.itemId).collect())
+    #
+    #     recs = recs_all.filter(lambda r: r[0] == userId).flatMap(lambda r: [rating.product for rating in r[1]])
+    #     # print('recs: ', recs.collect())
+    #     # print('train_rated', train_rated)
+    #     recs = set(recs.filter(lambda item: item not in train_rated).take(i))
+    #     print('userId: ', userId, 'recs: ', recs)
+    #     joint_count = test.filter(lambda r: r.userId == userId and r.itemId in recs).count()
+    #     if joint_count > 0:
+    #         print('got one')
+    #         count += 1
+    # print('conversion rate @K={0}: {1}'.format(i, count/test_users.count()))
 
 
 

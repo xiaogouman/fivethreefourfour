@@ -1,4 +1,5 @@
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.mllib.recommendation import ALS, Rating
 from pyspark import SparkContext, SparkConf
@@ -7,36 +8,44 @@ from pyspark.sql.functions import countDistinct
 
 #.config('spark.driver.memory', '20g')\
 spark = SparkSession.builder.appName("Collborative Filering")\
-    .master('local[3]') \
+    .master('local[3]')\
+    .config('spark.executor.heartbeatInterval','20s')\
+    .config('spark.executor.memory', '3g')\
     .getOrCreate()
 sc = spark.sparkContext
-train = True
+
+
+training = spark.read.csv('train.csv', inferSchema =True, header=True).toDF('userId','itemId','rating')
+test = spark.read.csv('test.csv', inferSchema =True, header=True).toDF('userId','itemId','rating').rdd
+training_rdd = training.rdd
+test_user_set = set(test.map(lambda r: r.userId).distinct().collect())
+print(test_user_set)
+
+train = False
 if train:
-    training = spark.read.csv('train.csv', inferSchema =True, header=True).toDF('userId','itemId','rating').rdd
-    test = spark.read.csv('test.csv', inferSchema =True, header=True).toDF('userId','itemId','rating').rdd
-
-    test_user_set = set(test.map(lambda r: r.userId).distinct().collect())
-    print(test_user_set)
-
-    model = ALS.train(training, rank=50, iterations=20)#, rank=50, iterations=20, lambda_= 1)
+    model = ALS.train(training_rdd, rank=50, iterations=20)#, rank=50, iterations=20, lambda_= 1)
 
     print('recommend start')
-    recs_all = model.recommendProductsForUsers(500)
+    recs_all = model.recommendProductsForUsers(180)
     # (54175, (Rating(user=54175, product=37684, rating=4.999785805913131), Rating(user=54175, product=26802, rating=4.994706715965597)))
     print('recommend finish')
-    recs_all = recs_all.filter(lambda r: r[0] in test_user_set)
-#     recs_all.saveAsTextFile('recs')
-# resc_all = sc.textFile('recs')
+    recs_all = recs_all.filter(lambda r: r[0] in test_user_set).saveAsPickleFile('recs')
+recs_all = sc.pickleFile('recs')
+train_rated = training.where(F.col('userId').isin(test_user_set)).groupBy(training.userId).agg(F.collect_set(training.itemId))
+train_rated.show()
+
 K = 10
 for i in range(1, K+1):
     count = 0
     for userId in test_user_set:
-        print(userId)
         train_rated = set(training.filter(lambda r: r.userId == userId).map(lambda r: r.itemId).collect())
-        print(train_rated)
+
+
         recs = recs_all.filter(lambda r: r[0] == userId).flatMap(lambda r: [rating.product for rating in r[1]])
+        # print('recs: ', recs.collect())
+        # print('train_rated', train_rated)
         recs = set(recs.filter(lambda item: item not in train_rated).take(i))
-        print(recs)
+        print('userId: ', userId, 'recs: ', recs)
         joint_count = test.filter(lambda r: r.userId == userId and r.itemId in recs).count()
         if joint_count > 0:
             print('got one')
