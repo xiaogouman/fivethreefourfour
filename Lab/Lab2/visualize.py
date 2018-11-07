@@ -41,37 +41,3 @@ ax0.hist(all_counts_list, 100, density=True)
 counts_remove_one = [x for x in counts_list if x > 1 and x < 200]
 ax1.hist(counts_remove_one, 100, density=True)
 plt.show()
-
-
-
-
-
-
-# # row counts = 836006
-# spark.sql('SELECT COUNT(*) FROM useritem')
-# # item counts = 266414
-# spark.sql('SELECT COUNT(DISTINCT itemId) FROM useritem')
-# # user counts = 478235
-# spark.sql('SELECT COUNT(DISTINCT userId) FROM useritem')
-# # number of users who only rate for 1 item: 358615
-# spark.sql(
-#     'SELECT COUNT(*) FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count == 1)')
-# # select user who rate for > 1 items and items rated by > 1 user
-# users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 1)'
-# items = 'SELECT itemId FROM (SELECT DISTINCT COUNT(*) AS count, itemId FROM useritem GROUP BY itemId HAVING count > 1)'
-#
-# # after filter out the sparse part: 353553
-# df = spark.sql('SELECT * FROM useritem WHERE userId IN (' + users + ')')  # AND itemId IN (' + items + ')')
-#
-#
-#
-# print('count of filtered db: {0}'.format(df.count()))
-# userIdIntMap = df.rdd.map(lambda r: r.userId).distinct().zipWithUniqueId().collectAsMap()
-# itemIdIntMap = df.rdd.map(lambda r: r.itemId).distinct().zipWithUniqueId().collectAsMap()
-
-# ratings = df.rdd.map(lambda d:Row(userId=userIdIntMap.get(d.userId), itemId=itemIdIntMap.get(d.itemId), rating=float(d.rating))).toDF()
-# (training, test) = ratings.randomSplit([0.8, 0.2])
-
-
-# df = spark.read.csv("filtered_data").toDF('userId', 'itemId', 'rating', 'timestamp')
-# df.show()
