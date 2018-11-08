@@ -57,7 +57,7 @@ als = ALS(maxIter=20, rank=50, regParam=1, userCol="userId", itemCol="itemId", r
 model = als.fit(training)
 
 ############## conversion rate ##############
-test_recs = model.recommendForUserSubset(test_users, 250).select("userId", "recommendations.itemId")
+test_recs = model.recommendForUserSubset(test_users, 500).select("userId", "recommendations.itemId")
 test_recs_dict = defaultdict(list)
 for row in test_recs.rdd.collect():
     test_recs_dict[row.userId] = list(row.itemId)
