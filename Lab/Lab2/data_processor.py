@@ -8,6 +8,7 @@ from pyspark.sql.functions import countDistinct
 import pandas as pd
 import os
 import random
+import sys
 
 spark = SparkSession.builder.master("local").appName("Collborative Filering").getOrCreate()
 
@@ -15,52 +16,47 @@ spark = SparkSession.builder.master("local").appName("Collborative Filering").ge
 rawdf = spark.read.csv("ratings_Musical_Instruments.csv").toDF('userId', 'itemId', 'rating', 'timestamp')
 rawdf.createOrReplaceTempView("useritem")
 
-# row counts = 836006
-count = spark.sql('SELECT COUNT(*) FROM useritem')
-count.show()
+# row counts = 500176
+spark.sql('SELECT COUNT(*) as total_count FROM useritem').show()
 
-# item counts = 266414
-itemId_count = spark.sql('SELECT COUNT(DISTINCT itemId) FROM useritem')
-itemId_count.show()
+# item counts = 83046
+spark.sql('SELECT COUNT(DISTINCT itemId) as item_count FROM useritem').show()
 
-# user counts = 478235
-userId_count = spark.sql('SELECT COUNT(DISTINCT userId) FROM useritem')
-userId_count.show()
+# user counts = 339231
+spark.sql('SELECT COUNT(DISTINCT userId) as user_count FROM useritem').show()
 
-# number of users who only rate for 1 item: 358615
-userId_one_item = spark.sql(
-    'SELECT COUNT(*) FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count == 1)')
-userId_one_item.show()
+# number of users who only rate for 1 item: 270914
+spark.sql(
+    'SELECT COUNT(*) as user_one_item_count FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count == 1)').show()
 
-# select user who rate for > 1 items and items rated by > 1 user
-users = 'SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 2)'
+# select user who rate for > 2 items
+ratings = spark.sql('SELECT * FROM useritem WHERE userId IN (SELECT userId FROM (SELECT DISTINCT COUNT(*) AS count, userId FROM useritem GROUP BY userId HAVING count > 2)').show()
 
-# after filter out the sparse part: 353553
-df = spark.sql('SELECT * FROM useritem WHERE userId IN (' + users + ')')
-print('count of filtered db: {0}'.format(df.count()))
+# after filter out the sparse part: 150708
+print('count of filtered db: {0}'.format(ratings.count()))
 
-userIdIntMap = df.rdd.map(lambda r: r.userId).distinct().zipWithUniqueId().collectAsMap()
-itemIdIntMap = df.rdd.map(lambda r: r.itemId).distinct().zipWithUniqueId().collectAsMap()
 
-ratings = df.rdd.map(lambda d:Row(userIdIntMap.get(d.userId), itemIdIntMap.get(d.itemId), float(d.rating), int(d.timestamp))).toDF()
-ratings = ratings.toDF('userId','itemId','rating','timestamp')
+if sys.argv[0] == 'top10':
+    # generate test data by selecting the top 10 ratings for each user(if he has equal or more than 10 ratings)
+    print('top10')
+    grouped = ratings.orderBy(F.desc('timestamp')).groupBy(ratings.userId).agg(F.collect_list(ratings.itemId).alias("itemId"), F.collect_list(ratings.rating).alias('rating'))
+    test_list = []
+    for user_data in grouped.rdd.collect():
+        userId = user_data.userId
+        item = user_data.itemId
+        rating = user_data.rating
+        length = int(len(item)/10)
+        for i in range(length):
+            test_list.append(Row(userId, item[i], rating[i]))
 
-grouped = ratings.orderBy(F.desc('timestamp')).groupBy(ratings.userId).agg(F.collect_list(ratings.itemId).alias("itemId"), F.collect_list(ratings.rating).alias('rating'))
-grouped.show()
-test_list = []
-for user_data in grouped.rdd.collect():
-    userId = user_data.userId
-    item = user_data.itemId
-    rating = user_data.rating
-    length = int(len(item)/10)
-    for i in range(length):
-        test_list.append(Row(userId, item[i], rating[i]))
+    test = spark.createDataFrame(test_list).toDF('userId', 'itemId', 'rating')
+    training = ratings.drop('timestamp').subtract(test)
+else:
+    # random split data set
+    print('random')
+    (training, test) = ratings.drop('timestamp').randomSplit([0.9, 0.1])
 
-# test = spark.createDataFrame(test_list).toDF('userId','itemId','rating')
-# training = ratings.drop('timestamp').subtract(test)
-# print(test.count())
-# print(training.count())
-
-(training, test) = ratings.drop('timestamp').randomSplit([0.9, 0.1])
 training.toPandas().to_csv('train.csv', index=False)
 test.toPandas().to_csv('test.csv', index=False)
+print(test.count(), training.count())
+
